@@ -9,7 +9,22 @@ import (
 
 	"github.com/alileza/pgsync/syncmap"
 	"github.com/jmoiron/sqlx"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+var (
+	pgsyncLastTableSync = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "pgsync_last_table_sync_timestamp_seconds",
+			Help: "Timestamp of the last successful table sync.",
+		},
+		[]string{"table_name"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(pgsyncLastTableSync)
+}
 
 type Sync struct {
 	src  *sqlx.DB
@@ -138,6 +153,7 @@ func (s *Sync) sync(tableName string) {
 	}
 
 	for range time.Tick(s.options.SyncInterval) {
+		pgsyncLastTableSync.WithLabelValues(tableName).Set(float64(time.Now().Unix()))
 		rows, err := s.src.Queryx(
 			fmt.Sprintf("SELECT * FROM %s WHERE %s > %v", tableName, primaryKey, s.storage.Load(tableName)),
 		)

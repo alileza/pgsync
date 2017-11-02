@@ -3,12 +3,14 @@ package main
 import (
 	"database/sql"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/alileza/pgsync/sync"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -19,6 +21,7 @@ var (
 	exclude                = kingpin.Flag("exclude", "exclude some tables").Short('x').String()
 	only                   = kingpin.Flag("only", "select specific tables").Short('s').String()
 	interval               = kingpin.Flag("sync_interval", "").Default("1m").Short('t').Duration()
+	prom                   = kingpin.Flag("prometheus_port", "").Short('p').String()
 )
 
 func main() {
@@ -56,6 +59,16 @@ func Main(o, e *log.Logger) int {
 			}
 		}
 	}()
+
+	if *prom != "" {
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/metrics", http.StatusFound)
+		})
+		http.Handle("/metrics", promhttp.Handler())
+		if err := http.ListenAndServe(*prom, nil); err != nil {
+			log.Println(err)
+		}
+	}
 
 	term := make(chan os.Signal)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
