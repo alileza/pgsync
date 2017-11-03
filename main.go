@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/alileza/pgsync/sync"
@@ -22,6 +23,7 @@ var (
 	only                   = kingpin.Flag("only", "select specific tables").Short('s').String()
 	interval               = kingpin.Flag("sync_interval", "").Default("1m").Short('t').Duration()
 	prom                   = kingpin.Flag("prometheus_port", "").Short('p').String()
+	chunk                  = kingpin.Flag("chunk", "fetch query amount").Short('c').Int()
 )
 
 func main() {
@@ -49,7 +51,10 @@ func Main(o, e *log.Logger) int {
 	defer src.Close()
 
 	s := sync.NewSync(src, dest, &sync.Options{
-		SyncInterval: *interval,
+		SyncInterval:  *interval,
+		Chunk:         *chunk,
+		IncludeTables: strings.Split(*only, ","),
+		ExcludeTables: strings.Split(*exclude, ","),
 	})
 	go s.Run()
 	go func() {

@@ -36,6 +36,7 @@ type Sync struct {
 }
 
 type Options struct {
+	Chunk         int
 	SyncInterval  time.Duration
 	IncludeTables []string
 	ExcludeTables []string
@@ -56,6 +57,9 @@ func NewSync(src, dest *sql.DB, o ...*Options) *Sync {
 		dest:          sqlx.NewDb(dest, "postgres"),
 		listenErrChan: make(chan error),
 		storage:       syncmap.New(),
+	}
+	if s.options.Chunk <= 0 {
+		s.options.Chunk = 1000
 	}
 
 	if len(o) > 0 {
@@ -129,7 +133,7 @@ func (s *Sync) Run() {
 }
 
 func (s *Sync) persist() {
-	for range time.Tick(s.options.SyncInterval) {
+	for range time.Tick(time.Second * 5) {
 		b, err := s.storage.ToByte()
 		if err != nil {
 			s.listenErrChan <- err
@@ -155,17 +159,21 @@ func (s *Sync) sync(tableName string) {
 	for range time.Tick(s.options.SyncInterval) {
 		pgsyncLastTableSync.WithLabelValues(tableName).Set(float64(time.Now().Unix()))
 		rows, err := s.src.Queryx(
-			fmt.Sprintf("SELECT * FROM %s WHERE %s > %v", tableName, primaryKey, s.storage.Load(tableName)),
+			fmt.Sprintf("SELECT * FROM %s WHERE %s > %v LIMIT %d", tableName, primaryKey, s.storage.Load(tableName), s.options.Chunk),
 		)
 		if err != nil {
-			s.listenErrChan <- fmt.Errorf("[sync:%s] %s", tableName, err.Error())
+			s.listenErrChan <- fmt.Errorf("[sync:%s] failed to query table > %s", tableName, err.Error())
 			continue
 		}
+		defer rows.Close()
+
+		s.listenErrChan <- fmt.Errorf("[sync:%s] syncing with %s > %v", tableName, primaryKey, s.storage.Load(tableName))
+
 		for rows.Next() {
 			m := make(map[string]interface{})
 			err = rows.MapScan(m)
 			if err != nil {
-				s.listenErrChan <- fmt.Errorf("[sync:%s] %s", tableName, err.Error())
+				s.listenErrChan <- fmt.Errorf("[sync:%s] failed to perform MapScan > %s", tableName, err.Error())
 				continue
 			}
 
@@ -188,7 +196,7 @@ func (s *Sync) sync(tableName string) {
 				vals...,
 			)
 			if err != nil {
-				s.listenErrChan <- fmt.Errorf("[sync:%s] %s", tableName, err.Error())
+				s.listenErrChan <- fmt.Errorf("[sync:%s] failed to insert values > %s", tableName, err.Error())
 				continue
 			}
 			s.storage.Store(tableName, m[primaryKey])
